@@ -1,0 +1,13 @@
+# Python bytecode cache (auto-generated whenever Python runs the code)
+__pycache__/
+*.py[cod]
+
+# Virtual environments (for when FastAPI etc. get installed)
+.venv/
+venv/
+
+# Environment variables / secrets (Plaid keys will live here later)
+.env
+
+# Test / tooling caches
+.pytest_cache/
