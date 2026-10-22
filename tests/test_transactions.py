@@ -1,16 +1,19 @@
 """Unit tests for Transaction and TransactionManager.
 
 Run from the project root with:
-    py -m unittest discover -s tests -v
+    .venv/bin/python -m unittest discover -s tests -v
 
-Libraries used: standard library only (unittest, datetime, uuid).
+Libraries used: pydantic (for ValidationError), plus the standard library
+(unittest, datetime, uuid).
 """
 
 import unittest
 from datetime import date
 from uuid import UUID, uuid4
 
-from backend.transaction import Transaction
+from pydantic import ValidationError
+
+from backend.transaction import Transaction, TransactionCreate
 from backend.transaction_manager import TransactionManager
 
 
@@ -45,14 +48,52 @@ class TransactionTests(unittest.TestCase):
         self.assertEqual(make_transaction(id=known_id).id, known_id)
 
     def test_amount_must_be_an_integer(self):
-        with self.assertRaises(TypeError):
+        with self.assertRaises(ValidationError):
             make_transaction(amount=4.50)  # floats are not allowed for money
-        with self.assertRaises(TypeError):
+        with self.assertRaises(ValidationError):
             make_transaction(amount=True)  # bool is technically an int; reject it
+        with self.assertRaises(ValidationError):
+            make_transaction(amount="450")  # strict mode: no string -> int coercion
 
     def test_date_must_be_a_date(self):
-        with self.assertRaises(TypeError):
+        # In Python code, strict mode requires a real datetime.date object.
+        with self.assertRaises(ValidationError):
             make_transaction(date="2026-10-21")
+
+    def test_missing_field_raises(self):
+        with self.assertRaises(ValidationError):
+            Transaction(amount=100, description="No category", date=date(2026, 10, 21))
+
+    def test_json_input_parses_date_and_id_strings(self):
+        # This is what FastAPI will receive: dates and UUIDs arrive as strings.
+        known_id = uuid4()
+        txn = Transaction.model_validate_json(
+            '{"amount": -450, "description": "Coffee", "category": "Food",'
+            f' "date": "2026-10-21", "id": "{known_id}"}}'
+        )
+        self.assertEqual(txn.date, date(2026, 10, 21))
+        self.assertEqual(txn.id, known_id)
+
+
+class TransactionCreateTests(unittest.TestCase):
+    """Tests for the client-facing TransactionCreate model."""
+
+    def test_has_no_id_field(self):
+        data = TransactionCreate(
+            amount=-450, description="Coffee", category="Food", date=date(2026, 10, 21)
+        )
+        self.assertFalse(hasattr(data, "id"))
+
+    def test_from_create_copies_fields_and_assigns_id(self):
+        data = TransactionCreate(
+            amount=-450, description="Coffee", category="Food", date=date(2026, 10, 21)
+        )
+        txn = Transaction.from_create(data)
+        self.assertEqual(txn.amount, data.amount)
+        self.assertEqual(txn.description, data.description)
+        self.assertEqual(txn.category, data.category)
+        self.assertEqual(txn.date, data.date)
+        self.assertIsInstance(txn.id, UUID)
 
 
 class TransactionManagerTests(unittest.TestCase):

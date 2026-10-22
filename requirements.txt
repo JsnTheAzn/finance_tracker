@@ -1,0 +1,11 @@
+# Third-party libraries for the Finance Tracker backend.
+# Install into the project virtual environment with:
+#   python3 -m venv .venv
+#   .venv/bin/pip install -r requirements.txt
+
+# Web framework for the upcoming REST API (Phase 2+).
+fastapi==0.159.1
+
+# Data validation for the Transaction models (backend/transaction.py).
+# FastAPI installs it too, but it is pinned here because our code imports it directly.
+pydantic==2.14.1
