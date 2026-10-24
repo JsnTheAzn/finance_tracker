@@ -1,25 +1,190 @@
-"""Demo script that exercises Transaction and TransactionManager end to end.
+"""Entry point for the Finance Tracker backend: the FastAPI app plus the Phase 1 demo.
 
-What it does, in order:
-    1. Instantiates a TransactionManager.
-    2. Creates and adds three transactions (one income, two expenses).
-    3. Retrieves one transaction by its UUID.
-    4. Calculates the net change across all transactions.
-    5. Deletes one transaction and shows the updated state.
+Phase 2: REST API
+-----------------
+This module creates a FastAPI application (``app``) that exposes the
+TransactionManager over HTTP so the frontend (and later the Plaid integration)
+can talk to the backend. The four basic actions are:
 
-Each step prints its result so you can verify the behavior by eye.
+    Action (operation_id)   HTTP method + path                   Success code
+    ---------------------   ----------------------------------   ------------
+    getAllTransaction       GET    /transactions                 200 OK
+    getTransaction          GET    /transactions/{id}            200 OK
+    addTransaction          POST   /transactions                 201 Created
+    deleteTransaction       DELETE /transactions/{id}            200 OK
 
-Run from the project root with:
-    python3 main.py
+The camelCase action names are set as each route's ``operation_id``. That is
+the name shown in the interactive docs and the name a generated frontend
+client would use (e.g. ``api.addTransaction(...)``). The Python functions
+themselves use snake_case, following normal Python style.
 
-Libraries used: standard library only (datetime). The project's own
-backend package supplies Transaction and TransactionManager.
+Errors:
+    * An unknown transaction ID returns ``404 Not Found``.
+    * An ID that is not a valid UUID, or a body with missing/wrong-typed
+      fields (e.g. ``"amount": 4.5``), returns ``422 Unprocessable Content``.
+      FastAPI produces these automatically from the Pydantic models.
+
+Storage is still the in-memory TransactionManager, so data is lost when the
+server stops. (A database comes in a later phase.)
+
+How to run
+----------
+Start the API server (auto-reload is not enabled):
+    .venv/bin/python main.py
+    # or: .venv/bin/uvicorn main:app --reload
+Then open http://127.0.0.1:8000/docs to try every endpoint in the browser.
+
+Run the Phase 1 print-statement demo instead of the server:
+    .venv/bin/python main.py --demo
+
+Libraries used: fastapi (web framework), uvicorn (the server that runs the
+app), pydantic (via backend.transaction), plus the standard library
+(datetime, sys, uuid).
 """
 
+import sys
 from datetime import date
+from uuid import UUID
 
-from backend.transaction import Transaction
+from fastapi import Depends, FastAPI, HTTPException, status
+
+from backend.transaction import Transaction, TransactionCreate
 from backend.transaction_manager import TransactionManager
+
+# ---------------------------------------------------------------------------
+# App and shared state
+# ---------------------------------------------------------------------------
+
+# title/description appear at the top of the auto-generated docs page (/docs).
+app = FastAPI(
+    title="Finance Tracker API",
+    description="Basic transaction endpoints for the Finance Tracker backend.",
+)
+
+# One manager for the whole running server, so every request sees the same
+# transactions. It lives at module level because there is no database yet.
+_manager = TransactionManager()
+
+
+def get_manager() -> TransactionManager:
+    """Give an endpoint the TransactionManager to use.
+
+    Endpoints receive the manager via ``Depends(get_manager)`` instead of
+    touching ``_manager`` directly. This is FastAPI's "dependency injection":
+    tests can swap in a fresh, empty manager with
+    ``app.dependency_overrides[get_manager] = ...``, and later phases can
+    replace this function with one that returns a database-backed manager
+    without changing any endpoint code.
+    """
+    return _manager
+
+
+# ---------------------------------------------------------------------------
+# API endpoints
+# ---------------------------------------------------------------------------
+# Notes that apply to every endpoint below:
+#   * response_model tells FastAPI the shape of the response, so it can
+#     serialize the Transaction to JSON (UUID -> string, date -> "YYYY-MM-DD")
+#     and document it.
+#   * A path parameter typed as UUID is validated automatically: a request to
+#     /transactions/not-a-uuid gets a 422 before our code even runs.
+#   * TransactionManager raises KeyError for a missing ID; we turn that into
+#     HTTPException(404), which FastAPI sends as {"detail": "..."}.
+
+
+@app.get(
+    "/transactions",
+    response_model=list[Transaction],
+    operation_id="getAllTransaction",
+    summary="List all transactions",
+)
+def get_all_transactions(
+    manager: TransactionManager = Depends(get_manager),
+) -> list[Transaction]:
+    """Return every stored transaction, in the order they were added.
+
+    Returns an empty list (not an error) when there are no transactions.
+    """
+    return manager.get_all_transactions()
+
+
+@app.get(
+    "/transactions/{transaction_id}",
+    response_model=Transaction,
+    operation_id="getTransaction",
+    summary="Get one transaction by ID",
+)
+def get_transaction(
+    transaction_id: UUID,
+    manager: TransactionManager = Depends(get_manager),
+) -> Transaction:
+    """Return the transaction with the given UUID, or 404 if it doesn't exist."""
+    try:
+        return manager.get_transaction(transaction_id)
+    except KeyError:
+        # "from None" hides the original KeyError from the traceback; the 404
+        # is the expected result, not a server bug.
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Transaction {transaction_id} not found",
+        ) from None
+
+
+@app.post(
+    "/transactions",
+    response_model=Transaction,
+    status_code=status.HTTP_201_CREATED,
+    operation_id="addTransaction",
+    summary="Add a new transaction",
+)
+def add_transaction(
+    data: TransactionCreate,
+    manager: TransactionManager = Depends(get_manager),
+) -> Transaction:
+    """Create a transaction from the request body and store it.
+
+    The body is a TransactionCreate (amount, description, category, date), so
+    the client cannot choose the ID. The server generates a new UUID and
+    returns the full stored Transaction, including that ID, so the client
+    knows how to fetch or delete it later.
+
+    Example request body:
+        {"amount": -450, "description": "Coffee",
+         "category": "Food", "date": "2026-10-21"}
+    """
+    # By the time this runs, FastAPI has already validated the body against
+    # TransactionCreate (and returned 422 if it was invalid).
+    transaction = Transaction.from_create(data)
+    manager.add_transaction(transaction)
+    return transaction
+
+
+@app.delete(
+    "/transactions/{transaction_id}",
+    response_model=Transaction,
+    operation_id="deleteTransaction",
+    summary="Delete a transaction by ID",
+)
+def delete_transaction(
+    transaction_id: UUID,
+    manager: TransactionManager = Depends(get_manager),
+) -> Transaction:
+    """Delete the transaction with the given UUID and return what was removed.
+
+    Returns 404 if no transaction has that ID (including one already deleted).
+    """
+    try:
+        return manager.delete_transaction(transaction_id)
+    except KeyError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Transaction {transaction_id} not found",
+        ) from None
+
+
+# ---------------------------------------------------------------------------
+# Phase 1 demo (print statements, no server)
+# ---------------------------------------------------------------------------
 
 
 def format_cents(cents: int) -> str:
@@ -46,8 +211,19 @@ def print_transaction(txn: Transaction) -> None:
     )
 
 
-def main() -> None:
-    """Run the demo steps and print the results of each."""
+def run_demo() -> None:
+    """Run the Phase 1 demo steps and print the results of each.
+
+    What it does, in order:
+        1. Instantiates a TransactionManager.
+        2. Creates and adds three transactions (one income, two expenses).
+        3. Retrieves one transaction by its UUID.
+        4. Calculates the net change across all transactions.
+        5. Deletes one transaction and shows the updated state.
+
+    It uses its own TransactionManager, separate from the API's, so running
+    the demo never touches server data.
+    """
     # --- Step 1: create the manager --------------------------------------
     manager = TransactionManager()
     print("Step 1: Created an empty TransactionManager")
@@ -115,7 +291,14 @@ def main() -> None:
     print(f"  Net change after delete: {net_after} cents ({format_cents(net_after)})")
 
 
-# Only run the demo when this file is executed directly (python3 main.py),
-# not when it is imported by another module or a test.
+# Only run when this file is executed directly (python main.py), not when it
+# is imported by uvicorn ("uvicorn main:app") or by the tests.
 if __name__ == "__main__":
-    main()
+    if "--demo" in sys.argv:
+        run_demo()
+    else:
+        # Imported here, not at the top, so importing main (e.g. in tests)
+        # doesn't require loading the server.
+        import uvicorn
+
+        uvicorn.run(app, host="127.0.0.1", port=8000)

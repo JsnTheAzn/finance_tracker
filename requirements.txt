@@ -3,8 +3,14 @@
 #   python3 -m venv .venv
 #   .venv/bin/pip install -r requirements.txt
 
-# Web framework for the upcoming REST API (Phase 2+).
+# Web framework for the REST API (main.py).
 fastapi==0.159.1
+
+# ASGI server that actually runs the FastAPI app (python main.py / uvicorn main:app).
+uvicorn==0.54.0
+
+# HTTP client required by FastAPI's TestClient (tests/test_api.py). Test-only.
+httpx==0.28.1
 
 # Data validation for the Transaction models (backend/transaction.py).
 # FastAPI installs it too, but it is pinned here because our code imports it directly.

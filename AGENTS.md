@@ -28,9 +28,33 @@ Create a main.py hat instantiates your classes, adds three transactions, retriev
 # Phase 2
 This phase I want to incorportate FastAPI. This will be the way where we will have the Frontend, backed and Plaid connections to talk to each other. 
 
+In main.py, please have fastAPI actions called getTransaction, addTransaction, deleteTransaction, getAllTransaction. This will be our basic API Calling functions for now. I will add more once we get going.
 
+[x] Added basic API functions
 
 [] Complete
+
+# Phase 3
+This phase we will now incorportate a Plaid sandbox environment to ensure everything is working properly with fake accounts. We will later incorporate a real account later but for now it's a sandbox environment. 
+
+I want to now createa a plaid_services.py in the backend to help connect a simulated sandbox enviornment from plaid. 
+Create a simulated bank connection using Plaid Sandbox.
+Exchange the Sandbox public token for an access token.
+Retrieve transactions using Plaid's /transactions/sync endpoint.
+Support pagination using next_cursor and has_more.
+Display a sanitized summary of the transactions for local testing.
+Handle API failures without exposing credentials or access tokens.
+Do not integrate real bank accounts yet.
+
+Do not rewrite existing application components unnecessarily.
+Keep Plaid integration separate from FastAPI routing.
+Do not implement React or PostgreSQL yet.
+Do not hardcode credentials or commit them to GitHub.
+Do not expose Sandbox access tokens through public API endpoints.
+Follow the current official Plaid API documentation.
+
+[] Complete
+
 
 
 Throughout all phases, please run tests and make sure it works properly. 

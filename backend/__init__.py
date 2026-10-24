@@ -1,10 +1,10 @@
 """Backend package for the Finance Tracker.
 
-Phase 1 contains the core domain logic only:
+This package holds the core domain logic:
     - transaction.py          -> Pydantic models for a transaction
                                  (TransactionCreate and Transaction)
     - transaction_manager.py  -> in-memory storage and operations on Transactions
 
-The only third-party library used so far is Pydantic (for data validation).
-FastAPI and Plaid will be layered on top of these modules in later phases.
+The only third-party library used here is Pydantic (for data validation).
+The FastAPI layer lives in main.py at the project root; Plaid comes later.
 """

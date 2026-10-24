@@ -84,6 +84,18 @@ class TransactionManager:
         except KeyError:
             raise KeyError(f"Transaction {transaction_id} not found") from None
 
+    def get_all_transactions(self) -> list[Transaction]:
+        """Return every stored transaction as a list.
+
+        A new list is built each call, so callers can loop over or sort it
+        without affecting the manager's internal dict. Python dicts keep
+        insertion order, so the list is in the order transactions were added.
+
+        Returns:
+            A list of all Transactions (empty if none are stored).
+        """
+        return list(self._transactions.values())
+
     def delete_transaction(self, transaction_id: UUID) -> Transaction:
         """Remove the transaction with the given ID and return it.
 

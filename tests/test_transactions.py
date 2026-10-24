@@ -55,10 +55,17 @@ class TransactionTests(unittest.TestCase):
         with self.assertRaises(ValidationError):
             make_transaction(amount="450")  # strict mode: no string -> int coercion
 
-    def test_date_must_be_a_date(self):
-        # In Python code, strict mode requires a real datetime.date object.
+    def test_iso_date_string_is_converted_to_date(self):
+        # FastAPI hands Pydantic the date as a string, so ISO strings must work.
+        self.assertEqual(make_transaction(date="2026-10-21").date, date(2026, 10, 21))
+
+    def test_date_must_be_a_date_or_iso_string(self):
         with self.assertRaises(ValidationError):
-            make_transaction(date="2026-10-21")
+            make_transaction(date="10/21/2026")  # not ISO format
+        with self.assertRaises(ValidationError):
+            make_transaction(date="2026-02-30")  # not a real calendar date
+        with self.assertRaises(ValidationError):
+            make_transaction(date=20261021)  # strict mode: no int -> date
 
     def test_missing_field_raises(self):
         with self.assertRaises(ValidationError):
@@ -123,6 +130,19 @@ class TransactionManagerTests(unittest.TestCase):
     def test_get_missing_transaction_raises(self):
         with self.assertRaises(KeyError):
             self.manager.get_transaction(uuid4())
+
+    def test_get_all_transactions(self):
+        self.assertEqual(self.manager.get_all_transactions(), [])
+        first, second = make_transaction(100), make_transaction(-200)
+        self.manager.add_transaction(first)
+        self.manager.add_transaction(second)
+        # Returned in insertion order.
+        self.assertEqual(self.manager.get_all_transactions(), [first, second])
+
+    def test_get_all_returns_a_copy(self):
+        self.manager.add_transaction(make_transaction())
+        self.manager.get_all_transactions().clear()  # mutate the returned list
+        self.assertEqual(len(self.manager), 1)  # manager is unaffected
 
     def test_delete_transaction(self):
         txn = make_transaction()

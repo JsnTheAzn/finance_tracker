@@ -25,17 +25,44 @@ Design notes
 * Strict mode is turned on (see ``model_config`` below). By default Pydantic
   "helpfully" converts values, e.g. the string "450" or the bool True into an
   int. For money that hides bugs, so strict mode rejects wrong types instead.
-  Strict mode still accepts ISO date strings ("2026-10-21") and UUID strings
-  when parsing JSON, which is exactly what the API will receive.
+  One exception is made for ``date``: FastAPI parses the JSON body into a
+  Python dict *before* Pydantic validates it, so the date arrives as the
+  string "2026-10-21", which strict mode would reject. A small "before"
+  validator (``_parse_iso_date``) converts ISO-format strings into real
+  ``datetime.date`` objects first; anything else (ints, garbage strings) is
+  still rejected. ``amount`` stays fully strict.
 
 Libraries used: pydantic (installed with FastAPI), plus the standard library
 (datetime, uuid).
 """
 
 from datetime import date as Date
+from typing import Annotated, Any
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field
+
+
+def _parse_iso_date(value: Any) -> Any:
+    """Convert an ISO "YYYY-MM-DD" string into a date; pass anything else through.
+
+    Runs *before* Pydantic's own (strict) date check. Non-string values are
+    returned unchanged so the strict check can accept real dates and reject
+    everything else (ints, floats, None, ...).
+
+    Raises:
+        ValueError: If the string is not a valid ISO date, e.g. "10/21/2026"
+            or "2026-02-30". Pydantic reports this as a validation error,
+            which FastAPI turns into a 422 response.
+    """
+    if isinstance(value, str):
+        return Date.fromisoformat(value)
+    return value
+
+
+# A reusable "date that may arrive as an ISO string" type. Annotated attaches
+# the before-validator to the plain date type without changing the type itself.
+IsoDate = Annotated[Date, BeforeValidator(_parse_iso_date)]
 
 
 class TransactionCreate(BaseModel):
@@ -62,7 +89,7 @@ class TransactionCreate(BaseModel):
     amount: int = Field(description="Signed amount in cents; negative = money out")
     description: str = Field(description="What the transaction was for")
     category: str = Field(description="Grouping label, e.g. Food or Rent")
-    date: Date = Field(description="Date the transaction occurred")
+    date: IsoDate = Field(description="Date the transaction occurred (YYYY-MM-DD)")
 
 
 class Transaction(TransactionCreate):
