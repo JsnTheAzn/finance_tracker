@@ -9,7 +9,8 @@ fastapi==0.159.1
 # ASGI server that actually runs the FastAPI app (python main.py / uvicorn main:app).
 uvicorn==0.54.0
 
-# HTTP client required by FastAPI's TestClient (tests/test_api.py). Test-only.
+# HTTP client: calls the Plaid API (backend/plaid_services.py) and is also
+# required by FastAPI's TestClient (tests/test_api.py).
 httpx==0.28.1
 
 # Data validation for the Transaction models (backend/transaction.py).

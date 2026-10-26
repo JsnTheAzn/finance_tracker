@@ -133,3 +133,21 @@ class Transaction(TransactionCreate):
         # model_dump() turns the model into a plain dict of its fields, which
         # is then unpacked into the Transaction constructor.
         return cls(**data.model_dump())
+
+
+def format_cents(cents: int) -> str:
+    """Turn a signed number of cents into a readable dollar string.
+
+    Amounts are stored as integer cents (see the module notes above), so this
+    is only for display. Integer division and modulo keep it exact; no floats.
+    Shared by main.py (the demo) and plaid_services.py (the Plaid summary) so
+    money is formatted the same way everywhere.
+
+    Example:
+        >>> format_cents(-120000)
+        '-$1,200.00'
+    """
+    sign = "-" if cents < 0 else ""
+    # divmod splits the absolute value into whole dollars and leftover cents.
+    dollars, remainder = divmod(abs(cents), 100)
+    return f"{sign}${dollars:,}.{remainder:02d}"

@@ -48,7 +48,8 @@ from uuid import UUID
 
 from fastapi import Depends, FastAPI, HTTPException, status
 
-from backend.transaction import Transaction, TransactionCreate
+# format_cents lives in backend/transaction.py so plaid_services.py can share it.
+from backend.transaction import Transaction, TransactionCreate, format_cents
 from backend.transaction_manager import TransactionManager
 
 # ---------------------------------------------------------------------------
@@ -185,22 +186,6 @@ def delete_transaction(
 # ---------------------------------------------------------------------------
 # Phase 1 demo (print statements, no server)
 # ---------------------------------------------------------------------------
-
-
-def format_cents(cents: int) -> str:
-    """Turn a signed number of cents into a readable dollar string.
-
-    Amounts are stored as integer cents (see backend/transaction.py), so this
-    is only for display. Integer division and modulo keep it exact; no floats.
-
-    Example:
-        >>> format_cents(-120000)
-        '-$1,200.00'
-    """
-    sign = "-" if cents < 0 else ""
-    # divmod splits the absolute value into whole dollars and leftover cents.
-    dollars, remainder = divmod(abs(cents), 100)
-    return f"{sign}${dollars:,}.{remainder:02d}"
 
 
 def print_transaction(txn: Transaction) -> None:

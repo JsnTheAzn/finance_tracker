@@ -53,6 +53,27 @@ Do not hardcode credentials or commit them to GitHub.
 Do not expose Sandbox access tokens through public API endpoints.
 Follow the current official Plaid API documentation.
 
+[x] Complete
+
+# Phase 4
+This phase we will connect the Plaid transactions to our own TransactionManager so the synced data actually lives in the app, and syncing more than once does not create duplicates.
+
+Add an optional external_id (str or None) to the Transaction model. This holds Plaid's transaction_id so we know which Plaid transaction each of ours came from.
+In plaid_services.py, have to_transaction set external_id.
+In transaction_manager.py, keep a second dictionary that maps external_id to our UUID so we can find a Plaid transaction quickly.
+Add an apply_sync(added, modified, removed) method to TransactionManager:
+    added -> store new transactions (skip/update if the external_id already exists)
+    modified -> update the existing transaction with the same external_id
+    removed -> delete the transaction with that external_id
+Have the plaid_services demo load the synced transactions into a TransactionManager and print the count and net change.
+
+Do not implement PostgreSQL, React, or new FastAPI routes yet.
+Do not change the existing API endpoints.
+Libraries allowed: Pydantic, httpx, FastAPI and the Python standard library only.
+Write tests showing that syncing the same data twice adds 0 new transactions, and that modified and removed are applied.
+
+Please document your process of what you did, and describe the steps you took to code this. As well, include extensive code documentation and give detailed code comments.
+
 [] Complete
 
 
