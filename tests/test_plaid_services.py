@@ -30,7 +30,9 @@ from backend.plaid_services import (
     SyncResult,
     dollars_to_cents,
     format_summary,
+    load_into_manager,
     load_env_file,
+    to_sync_changes,
     to_transaction,
 )
 
@@ -251,16 +253,29 @@ class PlaidClientTests(unittest.TestCase):
         self.assertEqual(ctx.exception.error_code, "DATA_NOT_READY")
         self.assertEqual(sleeps, [2, 2])  # waited 4s total, then gave up
 
-    def test_sync_returns_empty_when_history_complete_with_no_data(self):
-        # An Item that really has no transactions: Plaid is finished
-        # (HISTORICAL_UPDATE_COMPLETE), so don't wait or raise.
+    def test_sync_keeps_waiting_while_cursor_empty_even_if_history_complete(self):
+        # Seen in real Sandbox: HISTORICAL_UPDATE_COMPLETE arrives a second
+        # before the data, still with an empty cursor. Only the cursor counts.
         sleeps = []
-        fake = FakePlaid([sync_page(next_cursor="", status="HISTORICAL_UPDATE_COMPLETE")])
+        fake = FakePlaid([
+            sync_page(next_cursor="", status="INITIAL_UPDATE_COMPLETE"),
+            sync_page(next_cursor="", status="HISTORICAL_UPDATE_COMPLETE"),
+            sync_page([plaid_txn("t1", "4.50")], next_cursor="c1"),
+        ])
+        with self.make_client(fake) as plaid:
+            result = plaid.sync_transactions(ACCESS_TOKEN, sleep=sleeps.append)
+        self.assertEqual(len(sleeps), 2)
+        self.assertEqual(len(result.added), 1)
+
+    def test_sync_returns_empty_when_ready_with_no_transactions(self):
+        # A ready Item with no transactions has a non-empty cursor: no waiting.
+        sleeps = []
+        fake = FakePlaid([sync_page(next_cursor="c-empty", status="HISTORICAL_UPDATE_COMPLETE")])
         with self.make_client(fake) as plaid:
             result = plaid.sync_transactions(ACCESS_TOKEN, sleep=sleeps.append)
         self.assertEqual(sleeps, [])
         self.assertEqual(result.added, [])
-        self.assertEqual(result.update_status, "HISTORICAL_UPDATE_COMPLETE")
+        self.assertEqual(result.next_cursor, "c-empty")
 
     # --- error handling ----------------------------------------------------
 
@@ -374,6 +389,51 @@ class ConversionTests(unittest.TestCase):
         self.assertEqual(txn.description, "Raw Bank Name")
         self.assertEqual(txn.category, "UNCATEGORIZED")
 
+    def test_to_transaction_sets_external_id_and_pending(self):
+        posted = to_transaction(plaid_txn("txn-abc", "4.50"))
+        self.assertEqual(posted.external_id, "txn-abc")
+        self.assertFalse(posted.pending)
+        pending = to_transaction(plaid_txn("txn-def", "4.50", pending=True))
+        self.assertTrue(pending.pending)
+
+    def test_to_transaction_requires_transaction_id(self):
+        txn = plaid_txn("t1", "4.50")
+        del txn["transaction_id"]
+        with self.assertRaises(KeyError):
+            to_transaction(txn)
+
+    def test_to_sync_changes_maps_all_three_lists(self):
+        result = SyncResult(
+            added=[plaid_txn("a1", "4.50"), plaid_txn("jpy", "1500", iso_currency_code="JPY")],
+            modified=[plaid_txn("m1", "9.99")],
+            removed=[{"transaction_id": "r1", "account_id": "acct-1"}, {"account_id": "no-id"}],
+        )
+        changes = to_sync_changes(result)
+        self.assertEqual([t.external_id for t in changes.added], ["a1"])
+        self.assertEqual([t.external_id for t in changes.modified], ["m1"])
+        self.assertEqual(changes.removed, ["r1"])
+        self.assertEqual(changes.skipped, 2)  # the JPY row and the removed entry without an id
+        self.assertEqual(changes.replaces, {})
+
+    def test_to_sync_changes_links_posted_to_pending(self):
+        result = SyncResult(
+            added=[plaid_txn("posted-1", "20.00", pending_transaction_id="pending-1")],
+            removed=[{"transaction_id": "pending-1", "account_id": "acct-1"}],
+        )
+        self.assertEqual(to_sync_changes(result).replaces, {"posted-1": "pending-1"})
+
+    def test_sync_changes_load_into_manager_idempotently(self):
+        from backend.transaction_manager import TransactionManager
+
+        result = SyncResult(added=[plaid_txn("a1", "4.50"), plaid_txn("a2", "-100.00")])
+        manager = TransactionManager()
+        to_sync_changes(result).apply_to(manager)
+        # A second conversion makes new UUIDs, like a real re-sync.
+        counts = to_sync_changes(result).apply_to(manager)
+        self.assertEqual(counts.added, 0)
+        self.assertEqual(len(manager), 2)
+        self.assertEqual(manager.calculate_net_change(), 9550)
+
     def test_to_transaction_accepts_usd_and_missing_currency(self):
         self.assertEqual(to_transaction(plaid_txn("t1", "4.50", iso_currency_code="USD")).amount, -450)
         self.assertEqual(to_transaction(plaid_txn("t2", "4.50")).amount, -450)  # no code -> USD
@@ -439,6 +499,24 @@ class SummaryTests(unittest.TestCase):
         self.assertIn("Added:     2 (1 pending)", summary)
         self.assertIn("(positive = money in): -$4.50", summary)  # pending $20 not counted
         self.assertIn("P 2026-10-21", summary)
+
+
+class LoadIntoManagerTests(unittest.TestCase):
+    def test_reports_idempotent_resync(self):
+        result = SyncResult(added=[
+            plaid_txn("a1", "4.50"),
+            plaid_txn("a2", "20.00", pending=True),
+            plaid_txn("jpy", "1500", iso_currency_code="JPY"),
+        ])
+        report = load_into_manager(result)
+        self.assertIn("First sync:   SyncCounts(added=2, updated=0, removed=0)", report)
+        self.assertIn("Second sync:  SyncCounts(added=0, updated=2, removed=0)", report)
+        self.assertIn("Stored:       2 (1 pending)", report)
+        self.assertIn("Skipped:      1", report)
+        self.assertIn("posted only: -$4.50", report)
+        self.assertIn("incl. pending: -$24.50", report)
+        self.assertIn("OK:", report)
+        self.assertNotIn("a1", report)  # no IDs in the report
 
 
 class FormatCentsTests(unittest.TestCase):

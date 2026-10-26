@@ -58,6 +58,18 @@ class TransactionApiTests(unittest.TestCase):
         UUID(body["id"])  # raises ValueError if the id isn't a valid UUID
         self.assertEqual(len(self.manager), 1)
 
+    def test_add_shows_bank_fields_with_manual_defaults(self):
+        body = self.add()
+        self.assertIsNone(body["external_id"])
+        self.assertFalse(body["pending"])
+
+    def test_add_ignores_client_supplied_bank_fields(self):
+        # external_id and pending aren't on TransactionCreate, so a client
+        # can't pretend a manual transaction came from the bank.
+        body = self.add(external_id="fake-plaid-id", pending=True)
+        self.assertIsNone(body["external_id"])
+        self.assertFalse(body["pending"])
+
     def test_add_ignores_client_supplied_id(self):
         # TransactionCreate has no id field, so a sent id is dropped and the
         # server generates its own.

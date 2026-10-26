@@ -1,6 +1,6 @@
 Claude code etiquette:
 Specify what code libraries Claude can use for the project, because Claude likes to bring in other outside libraries, which can be hard to understand
-Always be sure to include a "Please document your process of what you did, and describe the steps you took to code this. As well, include extensive code documentation and give detailed code comments." at then end of your prompts
+Always be sure to include a "Please document your process in docs/phaseX.md for this phase: what you did, the steps you took, and why. Keep comments in the code short; the detailed explanations go in the phase doc." at then end of your prompts
 
 # Phase 1
 We are going to develop the Backend logic of this finance tracker. We will be using Python + Fast API where we will connect to API's and banks using Plaid but don't worry about that for now. Let's define a transaction.
@@ -60,7 +60,7 @@ This phase we will connect the Plaid transactions to our own TransactionManager 
 
 Add an optional external_id (str or None) to the Transaction model. This holds Plaid's transaction_id so we know which Plaid transaction each of ours came from.
 In plaid_services.py, have to_transaction set external_id.
-In transaction_manager.py, keep a second dictionary that maps external_id to our UUID so we can find a Plaid transaction quickly.
+In transaction_manager.py, apply_sync builds a temporary external_id -> UUID lookup each time it runs (no permanent second dictionary). The DB phase replaces this with a UNIQUE constraint on external_id and an upsert.
 Add an apply_sync(added, modified, removed) method to TransactionManager:
     added -> store new transactions (skip/update if the external_id already exists)
     modified -> update the existing transaction with the same external_id
@@ -72,9 +72,9 @@ Do not change the existing API endpoints.
 Libraries allowed: Pydantic, httpx, FastAPI and the Python standard library only.
 Write tests showing that syncing the same data twice adds 0 new transactions, and that modified and removed are applied.
 
-Please document your process of what you did, and describe the steps you took to code this. As well, include extensive code documentation and give detailed code comments.
+Please document your process in docs/phaseX.md for this phase: what you did, the steps you took, and why. Keep comments in the code short; the detailed explanations go in the phase doc.
 
-[] Complete
+[x] Complete
 
 
 

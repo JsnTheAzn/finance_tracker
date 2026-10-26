@@ -1,83 +1,44 @@
-"""Defines TransactionManager, which stores and operates on Transaction objects.
+"""In-memory store for transactions, keyed by UUID. See docs/phase1.md and docs/phase4.md."""
 
-Data structure
---------------
-Transactions are kept in a dictionary that maps each transaction's UUID to the
-Transaction object:
-
-    {
-        UUID('3f2b...'): Transaction(amount=-450, ...),
-        UUID('9a1c...'): Transaction(amount=250000, ...),
-    }
-
-Python dictionaries are hash tables. When a UUID is used as a key, Python calls
-hash() on it and uses the result to decide where the entry lives. That is why
-adding, looking up, and deleting by ID are all O(1) on average: no matter how
-many transactions are stored, finding one by ID takes about the same time.
-
-Libraries used: standard library only (uuid).
-"""
-
+from typing import NamedTuple
 from uuid import UUID
 
 from backend.transaction import Transaction
 
 
-class TransactionManager:
-    """In-memory store for transactions, keyed by their UUID.
+class SyncCounts(NamedTuple):
+    """How many transactions apply_sync added, updated and removed."""
 
-    Example:
-        >>> manager = TransactionManager()
-        >>> txn_id = manager.add_transaction(txn)
-        >>> manager.get_transaction(txn_id) is txn
-        True
-        >>> manager.calculate_net_change()
-        -450
-    """
+    added: int
+    updated: int
+    removed: int
+
+
+class TransactionManager:
+    """Stores Transactions in a dict keyed by their UUID."""
 
     def __init__(self) -> None:
-        """Create an empty manager."""
-        # The leading underscore marks this as internal. Other code should go
-        # through the methods below instead of editing the dict directly, so
-        # rules like "no duplicate IDs" are always enforced.
         self._transactions: dict[UUID, Transaction] = {}
 
     def add_transaction(self, transaction: Transaction) -> UUID:
         """Store a transaction and return its ID.
 
-        Args:
-            transaction: The Transaction to store.
-
-        Returns:
-            The UUID of the stored transaction, so the caller can look it up later.
-
         Raises:
             TypeError: If the argument is not a Transaction.
             ValueError: If a transaction with the same ID is already stored.
-                Overwriting silently would lose data, so this is an error.
         """
         if not isinstance(transaction, Transaction):
             raise TypeError("add_transaction expects a Transaction")
         if transaction.id in self._transactions:
             raise ValueError(f"Transaction {transaction.id} already exists")
-
-        # The UUID is hashed by the dict to pick the storage slot.
         self._transactions[transaction.id] = transaction
         return transaction.id
 
     def get_transaction(self, transaction_id: UUID) -> Transaction:
         """Return the transaction with the given ID.
 
-        Args:
-            transaction_id: The UUID of the transaction to find.
-
-        Returns:
-            The matching Transaction.
-
         Raises:
-            KeyError: If no transaction has that ID. Raising (instead of
-                returning None) lets the future API layer turn it into a
-                clean "404 Not Found" response.
+            KeyError: If no transaction has that ID.
         """
         try:
             return self._transactions[transaction_id]
@@ -85,51 +46,94 @@ class TransactionManager:
             raise KeyError(f"Transaction {transaction_id} not found") from None
 
     def get_all_transactions(self) -> list[Transaction]:
-        """Return every stored transaction as a list.
-
-        A new list is built each call, so callers can loop over or sort it
-        without affecting the manager's internal dict. Python dicts keep
-        insertion order, so the list is in the order transactions were added.
-
-        Returns:
-            A list of all Transactions (empty if none are stored).
-        """
+        """Return every stored transaction, in the order they were added."""
         return list(self._transactions.values())
 
     def delete_transaction(self, transaction_id: UUID) -> Transaction:
         """Remove the transaction with the given ID and return it.
 
-        Returning the removed object lets the caller confirm or display
-        what was deleted.
-
-        Args:
-            transaction_id: The UUID of the transaction to delete.
-
-        Returns:
-            The Transaction that was removed.
-
         Raises:
             KeyError: If no transaction has that ID.
         """
         try:
-            # dict.pop removes the key and gives back its value in one step.
             return self._transactions.pop(transaction_id)
         except KeyError:
             raise KeyError(f"Transaction {transaction_id} not found") from None
 
-    def calculate_net_change(self) -> int:
-        """Return the sum of all transaction amounts, in cents.
+    def calculate_net_change(self, include_pending: bool = True) -> int:
+        """Return the sum of all amounts in cents, optionally leaving out pending ones."""
+        return sum(
+            txn.amount
+            for txn in self._transactions.values()
+            if include_pending or not txn.pending
+        )
 
-        Because amounts are signed, adding them together gives the net change:
-        income (positive) minus spending (negative). An empty manager returns 0.
+    def apply_sync(
+        self,
+        added: list[Transaction],
+        modified: list[Transaction],
+        removed: list[str],
+        replaces: dict[str, str] | None = None,
+    ) -> SyncCounts:
+        """Apply one bank sync's changes, matching transactions by external_id.
 
-        Example: +250000 (paycheck) + -450 (coffee) = 249550 cents ($2,495.50).
+        added and modified are upserts that keep an existing transaction's
+        UUID; removed lists external_ids to delete (unknown ones are ignored).
+        replaces maps a new external_id to the one it supersedes, e.g. a
+        posted transaction replacing its pending version, so that record is
+        updated in place instead of deleted and re-added. Transactions without
+        an external_id are never touched. Nothing changes if validation fails.
 
-        Returns:
-            The net change in cents as a signed integer.
+        Raises:
+            TypeError: If an item in added/modified is not a Transaction.
+            ValueError: If an item has no external_id, or its new UUID is
+                already used by a different stored transaction.
         """
-        return sum(txn.amount for txn in self._transactions.values())
+        replaces = replaces or {}
+        incoming = [*added, *modified]
+        for txn in incoming:
+            if not isinstance(txn, Transaction):
+                raise TypeError("apply_sync expects Transactions in added and modified")
+            if not txn.external_id:
+                raise ValueError(f"Transaction {txn.id} has no external_id")
+
+        by_external_id = {
+            txn.external_id: txn.id
+            for txn in self._transactions.values()
+            if txn.external_id is not None
+        }
+
+        for txn in incoming:
+            match = by_external_id.get(txn.external_id) or by_external_id.get(
+                replaces.get(txn.external_id)
+            )
+            if match is None and txn.id in self._transactions:
+                raise ValueError(
+                    f"Transaction {txn.id} is already used by a different transaction"
+                )
+
+        added_count = updated_count = removed_count = 0
+        for txn in incoming:
+            existing_id = by_external_id.get(txn.external_id)
+            if existing_id is None and txn.external_id in replaces:
+                existing_id = by_external_id.pop(replaces[txn.external_id], None)
+
+            if existing_id is None:
+                self._transactions[txn.id] = txn.model_copy()
+                by_external_id[txn.external_id] = txn.id
+                added_count += 1
+            else:
+                self._transactions[existing_id] = txn.model_copy(update={"id": existing_id})
+                by_external_id[txn.external_id] = existing_id
+                updated_count += 1
+
+        for external_id in removed:
+            existing_id = by_external_id.pop(external_id, None)
+            if existing_id is not None:
+                del self._transactions[existing_id]
+                removed_count += 1
+
+        return SyncCounts(added_count, updated_count, removed_count)
 
     def __len__(self) -> int:
-        """Return how many transactions are stored, so len(manager) works."""
         return len(self._transactions)
