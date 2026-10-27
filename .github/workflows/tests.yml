@@ -1,0 +1,29 @@
+# Runs the test suite on every push and pull request. See docs/ci.md.
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      # No .env or MYSQL_* settings here, so the MySQL tests are skipped.
+      - name: Run tests
+        run: python -m unittest discover -s tests -v
