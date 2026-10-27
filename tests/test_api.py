@@ -16,6 +16,7 @@ from uuid import UUID, uuid4
 from fastapi.testclient import TestClient
 
 from backend.transaction_manager import TransactionManager
+import main
 from main import app, get_manager
 
 # A valid request body for POST /transactions. Dates are ISO strings in JSON.
@@ -25,6 +26,16 @@ COFFEE = {
     "category": "Food",
     "date": "2026-10-21",
 }
+
+
+class GetManagerTests(unittest.TestCase):
+    def test_uses_in_memory_manager_without_mysql(self):
+        original = main.USE_MYSQL
+        main.USE_MYSQL = False
+        try:
+            self.assertIsInstance(next(get_manager()), TransactionManager)
+        finally:
+            main.USE_MYSQL = original
 
 
 class TransactionApiTests(unittest.TestCase):
@@ -69,6 +80,10 @@ class TransactionApiTests(unittest.TestCase):
         body = self.add(external_id="fake-plaid-id", pending=True)
         self.assertIsNone(body["external_id"])
         self.assertFalse(body["pending"])
+
+    def test_add_rejects_text_longer_than_db_columns(self):
+        self.assertEqual(self.client.post("/transactions", json={**COFFEE, "category": "x" * 101}).status_code, 422)
+        self.assertEqual(self.client.post("/transactions", json={**COFFEE, "description": "x" * 513}).status_code, 422)
 
     def test_add_ignores_client_supplied_id(self):
         # TransactionCreate has no id field, so a sent id is dropped and the

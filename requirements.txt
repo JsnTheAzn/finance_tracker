@@ -16,3 +16,9 @@ httpx==0.28.1
 # Data validation for the Transaction models (backend/transaction.py).
 # FastAPI installs it too, but it is pinned here because our code imports it directly.
 pydantic==2.14.1
+
+# MySQL driver for the Aiven database (backend/db.py). Pure Python, raw SQL.
+pymysql==1.2.3
+
+# Encrypts Plaid access tokens before they're stored (backend/plaid_item_store.py).
+cryptography==50.0.2

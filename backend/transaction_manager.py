@@ -14,6 +14,20 @@ class SyncCounts(NamedTuple):
     removed: int
 
 
+def validate_sync_input(incoming: list[Transaction]) -> None:
+    """Check apply_sync's added/modified items. Shared by the in-memory and MySQL managers.
+
+    Raises:
+        TypeError: If an item is not a Transaction.
+        ValueError: If an item has no external_id.
+    """
+    for txn in incoming:
+        if not isinstance(txn, Transaction):
+            raise TypeError("apply_sync expects Transactions in added and modified")
+        if not txn.external_id:
+            raise ValueError(f"Transaction {txn.id} has no external_id")
+
+
 class TransactionManager:
     """Stores Transactions in a dict keyed by their UUID."""
 
@@ -25,12 +39,16 @@ class TransactionManager:
 
         Raises:
             TypeError: If the argument is not a Transaction.
-            ValueError: If a transaction with the same ID is already stored.
+            ValueError: If the same ID, or the same external_id, is already stored.
         """
         if not isinstance(transaction, Transaction):
             raise TypeError("add_transaction expects a Transaction")
         if transaction.id in self._transactions:
             raise ValueError(f"Transaction {transaction.id} already exists")
+        if transaction.external_id is not None and any(
+            txn.external_id == transaction.external_id for txn in self._transactions.values()
+        ):
+            raise ValueError(f"external_id {transaction.external_id} already exists")
         self._transactions[transaction.id] = transaction
         return transaction.id
 
@@ -91,11 +109,7 @@ class TransactionManager:
         """
         replaces = replaces or {}
         incoming = [*added, *modified]
-        for txn in incoming:
-            if not isinstance(txn, Transaction):
-                raise TypeError("apply_sync expects Transactions in added and modified")
-            if not txn.external_id:
-                raise ValueError(f"Transaction {txn.id} has no external_id")
+        validate_sync_input(incoming)
 
         by_external_id = {
             txn.external_id: txn.id

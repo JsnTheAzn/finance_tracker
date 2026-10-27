@@ -24,8 +24,9 @@ class TransactionCreate(BaseModel):
     model_config = ConfigDict(strict=True)
 
     amount: int = Field(description="Signed amount in cents; negative = money out")
-    description: str = Field(description="What the transaction was for")
-    category: str = Field(description="Grouping label, e.g. Food or Rent")
+    # Max lengths match the MySQL columns in backend/schema.sql.
+    description: str = Field(max_length=512, description="What the transaction was for")
+    category: str = Field(max_length=100, description="Grouping label, e.g. Food or Rent")
     date: IsoDate = Field(description="Date the transaction occurred (YYYY-MM-DD)")
 
 

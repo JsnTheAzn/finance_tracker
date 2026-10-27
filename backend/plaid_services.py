@@ -1,24 +1,24 @@
 """Plaid Sandbox client: link a fake bank, sync its transactions, load them into a manager.
 
-Run from the project root with ``.venv/bin/python -m backend.plaid_services``.
-Credentials come from a git-ignored .env file (see .env.example). Only the
-Sandbox environment is allowed. See docs/phase3.md and docs/phase4.md.
+Run from the project root with ``.venv/bin/python -m backend.plaid_services [--relink]``.
+With MySQL configured in .env it syncs into the database (backend/sync_service.py);
+otherwise it runs the in-memory demo. Only the Sandbox environment is allowed.
+See docs/phase3.md, docs/phase4.md and docs/phase5.md.
 """
 
 import json
 import os
-import re
 import sys
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date as Date
 from decimal import ROUND_HALF_EVEN, Decimal, InvalidOperation
-from pathlib import Path
 from typing import Any
 
 import httpx
 
+from backend.config import load_env_file
 from backend.transaction import Transaction, format_cents
 from backend.transaction_manager import SyncCounts, TransactionManager
 
@@ -31,9 +31,7 @@ DEFAULT_SANDBOX_USERNAME = "user_transactions_dynamic"
 DEFAULT_SANDBOX_PASSWORD = "pass_good"
 
 MUTATION_DURING_PAGINATION = "TRANSACTIONS_SYNC_MUTATION_DURING_PAGINATION"
-ENV_NAME_PATTERN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 SUPPORTED_CURRENCY = "USD"
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
 class PlaidError(Exception):
@@ -94,35 +92,6 @@ class SyncChanges:
     def apply_to(self, manager: TransactionManager) -> SyncCounts:
         """Apply these changes to a manager."""
         return manager.apply_sync(self.added, self.modified, self.removed, self.replaces)
-
-
-def load_env_file(path: Path = PROJECT_ROOT / ".env") -> None:
-    """Load KEY=VALUE lines from a .env file without overriding variables already set."""
-    if not path.is_file():
-        return
-    for line in path.read_text().splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, _, value = line.partition("=")
-        key = key.strip()
-        if key.startswith("export "):
-            key = key[len("export "):].strip()
-        if not ENV_NAME_PATTERN.fullmatch(key):
-            continue
-        os.environ.setdefault(key, _parse_env_value(value.strip()))
-
-
-def _parse_env_value(value: str) -> str:
-    """Handle quotes and trailing ' # comments' in a .env value."""
-    if value[:1] in ("'", '"'):
-        closing = value.find(value[0], 1)
-        if closing != -1:
-            return value[1:closing]
-    for separator in (" #", "\t#"):
-        if separator in value:
-            value = value.split(separator, 1)[0]
-    return value.strip()
 
 
 class PlaidClient:
@@ -487,7 +456,16 @@ def load_into_manager(result: SyncResult) -> str:
 
 
 def main() -> int:
-    """Run the full Sandbox flow and print the summaries. Returns a process exit code."""
+    """Sync into MySQL when configured, else run the in-memory demo. Returns a process exit code."""
+    from backend import db, sync_service  # imported here: sync_service imports this module
+
+    if db.is_configured():
+        return sync_service.main(relink="--relink" in sys.argv)
+    return run_memory_demo()
+
+
+def run_memory_demo() -> int:
+    """Link a new Sandbox item, sync it and load it into an in-memory manager."""
     try:
         with PlaidClient.from_env() as plaid:
             print(f"Connecting to Plaid {plaid.env} (institution {DEFAULT_SANDBOX_INSTITUTION})...")

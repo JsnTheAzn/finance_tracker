@@ -1,29 +1,63 @@
-"""Finance Tracker API (FastAPI) plus the Phase 1 demo. See docs/phase1.md and docs/phase2.md.
+"""Finance Tracker API (FastAPI) plus the Phase 1 demo. See docs/phase1.md, phase2.md and phase5.md.
+
+Uses MySQL when MYSQL_HOST is set in .env, otherwise an in-memory store.
 
     .venv/bin/python main.py          # start the API at http://127.0.0.1:8000/docs
     .venv/bin/python main.py --demo   # run the Phase 1 print demo
 """
 
 import sys
+from collections.abc import AsyncIterator, Iterator
+from contextlib import asynccontextmanager
 from datetime import date
 from uuid import UUID
 
 from fastapi import Depends, FastAPI, HTTPException, status
 
+from backend import db
+from backend.mysql_transaction_manager import MySQLTransactionManager
 from backend.transaction import Transaction, TransactionCreate, format_cents
 from backend.transaction_manager import TransactionManager
+
+# Either manager works: they have the same methods.
+Manager = TransactionManager | MySQLTransactionManager
+
+USE_MYSQL = db.is_configured()
+_manager = TransactionManager()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    """On server start, create the MySQL tables if they don't exist yet."""
+    if USE_MYSQL:
+        conn = db.connect()
+        try:
+            db.init_schema(conn)
+        finally:
+            conn.close()
+    yield
+
 
 app = FastAPI(
     title="Finance Tracker API",
     description="Basic transaction endpoints for the Finance Tracker backend.",
+    lifespan=lifespan,
 )
 
-_manager = TransactionManager()
 
+def get_manager() -> Iterator[Manager]:
+    """The manager for one request: a MySQL one (connection closed afterwards) or the in-memory one.
 
-def get_manager() -> TransactionManager:
-    """The manager endpoints use. Tests override this; later it can return a DB-backed one."""
-    return _manager
+    Tests override this with app.dependency_overrides.
+    """
+    if not USE_MYSQL:
+        yield _manager
+        return
+    conn = db.connect()
+    try:
+        yield MySQLTransactionManager(conn)
+    finally:
+        conn.close()
 
 
 def _not_found(transaction_id: UUID) -> HTTPException:
@@ -40,7 +74,7 @@ def _not_found(transaction_id: UUID) -> HTTPException:
     summary="List all transactions",
 )
 def get_all_transactions(
-    manager: TransactionManager = Depends(get_manager),
+    manager: Manager = Depends(get_manager),
 ) -> list[Transaction]:
     """Return every stored transaction, in the order they were added."""
     return manager.get_all_transactions()
@@ -54,7 +88,7 @@ def get_all_transactions(
 )
 def get_transaction(
     transaction_id: UUID,
-    manager: TransactionManager = Depends(get_manager),
+    manager: Manager = Depends(get_manager),
 ) -> Transaction:
     """Return the transaction with the given UUID, or 404."""
     try:
@@ -72,7 +106,7 @@ def get_transaction(
 )
 def add_transaction(
     data: TransactionCreate,
-    manager: TransactionManager = Depends(get_manager),
+    manager: Manager = Depends(get_manager),
 ) -> Transaction:
     """Create a transaction from the body; the server assigns the ID."""
     transaction = Transaction.from_create(data)
@@ -88,7 +122,7 @@ def add_transaction(
 )
 def delete_transaction(
     transaction_id: UUID,
-    manager: TransactionManager = Depends(get_manager),
+    manager: Manager = Depends(get_manager),
 ) -> Transaction:
     """Delete the transaction with the given UUID and return it, or 404."""
     try:

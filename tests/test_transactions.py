@@ -103,19 +103,36 @@ class TransactionCreateTests(unittest.TestCase):
         self.assertIsInstance(txn.id, UUID)
 
 
-class TransactionManagerTests(unittest.TestCase):
-    """Tests for TransactionManager operations."""
+def bank_txn(external_id: str, amount: int = -450, **overrides) -> Transaction:
+    """A Transaction as it would come from a bank sync (external_id set)."""
+    return make_transaction(amount, external_id=external_id, **overrides)
+
+
+class ManagerContract:
+    """Behaviour every manager must have (in-memory and MySQL).
+
+    Subclasses mix this into a unittest.TestCase and implement make_manager().
+    Only public methods are used, so the same tests prove both behave the same.
+    """
+
+    def make_manager(self):
+        raise NotImplementedError
 
     def setUp(self):
-        # setUp runs before every test, so each test gets a fresh, empty manager.
-        self.manager = TransactionManager()
+        super().setUp()  # lets a database test case empty its tables first
+        self.manager = self.make_manager()
 
     def test_add_and_get_transaction(self):
         txn = make_transaction()
         txn_id = self.manager.add_transaction(txn)
         self.assertEqual(txn_id, txn.id)
-        self.assertIs(self.manager.get_transaction(txn_id), txn)
+        self.assertEqual(self.manager.get_transaction(txn_id), txn)
         self.assertEqual(len(self.manager), 1)
+
+    def test_adding_duplicate_external_id_raises(self):
+        self.manager.add_transaction(bank_txn("p1"))
+        with self.assertRaises(ValueError):
+            self.manager.add_transaction(bank_txn("p1"))
 
     def test_adding_duplicate_id_raises(self):
         txn = make_transaction()
@@ -148,7 +165,7 @@ class TransactionManagerTests(unittest.TestCase):
         txn = make_transaction()
         self.manager.add_transaction(txn)
         removed = self.manager.delete_transaction(txn.id)
-        self.assertIs(removed, txn)
+        self.assertEqual(removed, txn)
         self.assertEqual(len(self.manager), 0)
         with self.assertRaises(KeyError):
             self.manager.get_transaction(txn.id)
@@ -180,26 +197,7 @@ class TransactionManagerTests(unittest.TestCase):
         self.assertEqual(self.manager.calculate_net_change(), -2450)  # default: all
         self.assertEqual(self.manager.calculate_net_change(include_pending=False), -450)
 
-
-def bank_txn(external_id: str, amount: int = -450, **overrides) -> Transaction:
-    """A Transaction as it would come from a bank sync (external_id set)."""
-    return make_transaction(amount, external_id=external_id, **overrides)
-
-
-class ApplySyncTests(unittest.TestCase):
-    """Tests for TransactionManager.apply_sync (Phase 4).
-
-    They only use public methods, so the same tests can later run against
-    the database-backed manager.
-    """
-
-    def setUp(self):
-        self.manager = TransactionManager()
-
-    def test_new_fields_default_for_manual_transactions(self):
-        txn = make_transaction()
-        self.assertIsNone(txn.external_id)
-        self.assertFalse(txn.pending)
+    # --- apply_sync (Phase 4) ------------------------------------------------
 
     def test_applying_same_sync_twice_adds_nothing_new(self):
         added = [bank_txn("p1", -450), bank_txn("p2", 250000)]
@@ -252,7 +250,7 @@ class ApplySyncTests(unittest.TestCase):
         manual = make_transaction(-999)
         self.manager.add_transaction(manual)
         self.manager.apply_sync([bank_txn("p1")], [], ["p1"])
-        self.assertIs(self.manager.get_transaction(manual.id), manual)
+        self.assertEqual(self.manager.get_transaction(manual.id), manual)
         self.assertEqual(len(self.manager), 1)
 
     def test_posted_replaces_pending_and_keeps_uuid(self):
@@ -283,7 +281,7 @@ class ApplySyncTests(unittest.TestCase):
         clash = bank_txn("p1", id=manual.id)
         with self.assertRaises(ValueError):
             self.manager.apply_sync([bank_txn("p0"), clash], [], [])
-        self.assertIs(self.manager.get_transaction(manual.id), manual)  # untouched
+        self.assertEqual(self.manager.get_transaction(manual.id), manual)  # untouched
         self.assertEqual(len(self.manager), 1)  # p0 wasn't half-applied
 
     def test_stored_transactions_are_copies(self):
@@ -300,6 +298,21 @@ class ApplySyncTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.manager.apply_sync([bank_txn("p1"), make_transaction()], [], [])
         self.assertEqual(len(self.manager), 0)  # nothing half-applied
+
+
+class InMemoryManagerTests(ManagerContract, unittest.TestCase):
+    def make_manager(self):
+        return TransactionManager()
+
+    def test_returns_the_same_object_that_was_added(self):
+        txn = make_transaction()
+        self.manager.add_transaction(txn)
+        self.assertIs(self.manager.get_transaction(txn.id), txn)
+
+    def test_new_fields_default_for_manual_transactions(self):
+        txn = make_transaction()
+        self.assertIsNone(txn.external_id)
+        self.assertFalse(txn.pending)
 
 
 if __name__ == "__main__":

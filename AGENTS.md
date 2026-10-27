@@ -22,7 +22,7 @@ I want to use a Dictionary as my data structure to hold all the Transactions and
 
 Create a main.py hat instantiates your classes, adds three transactions, retrieves one by UUID, calculates the net change, and deletes one. You can use print statements to verify the results.
 
-[] Change transaction_manager to connect to a DB (Do not implement this yet)
+[x] Change transaction_manager to connect to a DB (done in Phase 5)
 [] Complete
 
 # Phase 2
@@ -75,6 +75,28 @@ Write tests showing that syncing the same data twice adds 0 new transactions, an
 Please document your process in docs/phaseX.md for this phase: what you did, the steps you took, and why. Keep comments in the code short; the detailed explanations go in the phase doc.
 
 [x] Complete
+
+# Phase 5
+This phase we will save everything in a cloud MySQL database on Aiven, so data survives restarts and a Plaid sync can pick up where it left off. I want to learn how to connect to a cloud DB because I will use Aiven later.
+
+Use PyMySQL with raw SQL (no ORM) so I can see exactly what is sent to the database.
+Create backend/schema.sql with a transactions table (external_id UNIQUE) and a plaid_items table (item_id, encrypted access token, sync cursor).
+Create backend/db.py to connect to Aiven over SSL using the CA certificate, with settings from .env.
+Create a MySQLTransactionManager with the same methods and rules as TransactionManager, including apply_sync in one DB transaction.
+Store Plaid access tokens encrypted with the cryptography library (Fernet), with the key in .env.
+Sync a stored Plaid item from its saved cursor, and only save the new cursor after the changes are committed.
+In main.py, only change get_manager so the endpoints use MySQL when it is configured, otherwise in-memory.
+
+Do not implement React or new FastAPI routes yet.
+Do not change the existing API endpoints.
+Do not commit .env or the certs/ folder.
+Libraries allowed: Pydantic, httpx, FastAPI, PyMySQL, cryptography and the Python standard library only.
+Run the same manager tests against both the in-memory and the MySQL manager.
+
+Please document your process in docs/phaseX.md for this phase: what you did, the steps you took, and why. Keep comments in the code short; the detailed explanations go in the phase doc.
+
+[x] Complete (offline + local MySQL verified)
+[x] Verified against Aiven
 
 
 

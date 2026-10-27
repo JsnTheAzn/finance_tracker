@@ -11,3 +11,6 @@ venv/
 
 # Test / tooling caches
 .pytest_cache/
+
+# Database CA certificates (Aiven); download your own, see docs/phase5.md
+certs/
